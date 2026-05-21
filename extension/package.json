@@ -1,0 +1,13 @@
+{
+  "name": "yt-timestamp-extension-tests",
+  "version": "1.0.0",
+  "description": "Property-based tests for the YouTube Timestamp Generator extension",
+  "scripts": {
+    "test": "node --experimental-vm-modules tests/test_property_1.js",
+    "test:all": "node tests/test_property_1.js"
+  },
+  "devDependencies": {
+    "fast-check": "3.22.0",
+    "jsdom": "25.0.1"
+  }
+}

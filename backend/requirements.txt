@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pydantic
+youtube-transcript-api
+yt-dlp
+faster-whisper
+sentence-transformers
+nltk
+groq
+numpy
+httpx
