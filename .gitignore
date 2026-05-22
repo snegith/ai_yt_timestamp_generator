@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+venv/
+ENV/
+env/
+.venv/
+.pytest_cache/
+
+# Backend artifacts
+backend/.hypothesis/
+backend/*.pyc
+backend/__pycache__/
+
+# VS Code and IDEs
+.vscode/
+.idea/
+*.suo
+*.log
+
+# Node / frontend
+extension/node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local environment files
+.env
+.env.*

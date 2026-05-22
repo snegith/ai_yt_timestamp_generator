@@ -51,14 +51,14 @@ Implement a Chrome Extension (MV3, Vanilla JS) and a FastAPI backend that togeth
     - `detect_boundaries()` includes window at index `i > 0` iff similarity < 0.35, always includes `windows[0]`, and result is non-empty for non-empty input
     - **Validates: Requirements 8.3, 8.4, 10.3**
 
-- [ ] 6. Implement title generation pipeline module
+- [x] 6. Implement title generation pipeline module
   - [x] 6.1 Create `backend/pipeline/titles.py` with `async generate_titles(boundary_windows)` that sends a single batched prompt to the Groq API, parses the JSON array response, and returns a list of `Timestamp` objects sorted by time ascending
     - _Requirements: 9.1, 9.2, 9.4, 9.5, 10.1, 10.2, 10.3_
-  - [-] 6.2 Write property test for single batched Groq call (Property 11)
+  - [x] 6.2 Write property test for single batched Groq call (Property 11)
     - **Property 11: Single Batched Groq Call**
     - For any N ≥ 1 boundary windows, `generate_titles()` makes exactly 1 Groq API call and returns exactly N `Timestamp` objects
     - **Validates: Requirements 9.1**
-  - [-] 6.3 Write property test for output chronological order (Property 12)
+  - [x] 6.3 Write property test for output chronological order (Property 12)
     - **Property 12: Output Chronological Order**
     - Any successful `/generate` response has `timestamps` sorted in non-decreasing order of time values converted to seconds
     - **Validates: Requirements 10.1**
@@ -94,11 +94,11 @@ Implement a Chrome Extension (MV3, Vanilla JS) and a FastAPI backend that togeth
     - For any non-empty timestamp array, `renderTimestamps()` produces exactly one clickable element per timestamp with correct `time` and `title`
     - **Validates: Requirements 3.1**
 
-- [ ] 10. Create extension sidebar styles
+- [x] 10. Create extension sidebar styles
   - Create `extension/sidebar.css` with styles for `#yt-ts-sidebar`, `#yt-ts-header`, `#yt-ts-body`, the generate button, loading indicator, timestamp list items, and error state; ensure the panel does not obscure video player controls
   - _Requirements: 1.2_
 
-- [~] 11. Final checkpoint — Ensure all tests pass
+- [x] 11. Final checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
