@@ -120,6 +120,9 @@ def preprocess(segments: list[dict]) -> list[TextWindow]:
     for sent_text, sent_start in sentences:
         word_count = len(sent_text.split())
 
+        if not current_sentences:
+            current_start = sent_start
+
         # If adding this sentence would push us past _MAX_WORDS AND we
         # already have at least _MIN_WORDS, flush the current window first.
         if current_word_count + word_count > _MAX_WORDS and current_word_count >= _MIN_WORDS:
@@ -145,8 +148,6 @@ def preprocess(segments: list[dict]) -> list[TextWindow]:
                 )
             )
             current_sentences = []
-            # next sentence will set current_start
-            current_start = 0.0  # placeholder; overwritten on next iteration
             current_word_count = 0
 
     # Flush any remaining sentences as the final (possibly short) window.

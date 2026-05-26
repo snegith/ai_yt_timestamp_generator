@@ -67,6 +67,26 @@ app.add_middleware(
 )
 
 
+async def _run_pipeline(video_id: str):
+    segments = await get_transcript(video_id)
+    if not segments:
+        raise RuntimeError("Transcript retrieval failed: no transcript segments were found.")
+
+    windows = preprocess(segments)
+    if not windows:
+        raise RuntimeError("Transcript preprocessing failed: no usable transcript text was found.")
+
+    boundary_windows = detect_boundaries(windows)
+    if not boundary_windows:
+        raise RuntimeError("Boundary detection failed: no timestamp boundaries were found.")
+
+    timestamps = await generate_titles(boundary_windows)
+    if not timestamps:
+        raise RuntimeError("Title generation failed: no timestamps were generated.")
+
+    return timestamps
+
+
 # ---------------------------------------------------------------------------
 # POST /generate  (Requirements 4.1, 4.2, 4.3, 5.1, 5.2, 5.3)
 # ---------------------------------------------------------------------------
@@ -96,13 +116,13 @@ async def generate(request: GenerateRequest) -> GenerateResponse:
 
     # --- Step 2: Pipeline (Requirements 5.3, 6.x, 7.x, 8.x, 9.x) ---
     try:
-        segments = await get_transcript(video_id)
-        windows = preprocess(segments)
-        boundary_windows = detect_boundaries(windows)
-        timestamps = await generate_titles(boundary_windows)
+        timestamps = await _run_pipeline(video_id)
     except RuntimeError as exc:
         logger.error("Pipeline error for video_id=%s: %s", video_id, exc)
         raise HTTPException(status_code=502, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Unexpected pipeline error for video_id=%s", video_id)
+        raise HTTPException(status_code=502, detail=f"Pipeline failed: {exc}") from exc
 
     # --- Step 3: Store in cache (Requirement 5.3) ---
     cache.set(video_id, timestamps)

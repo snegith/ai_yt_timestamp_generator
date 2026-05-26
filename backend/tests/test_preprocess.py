@@ -160,6 +160,20 @@ class TestPreprocess:
         for w in result:
             assert isinstance(w.start_time, float)
 
+    def test_later_windows_keep_their_segment_start_time(self):
+        first_text = " ".join(["first"] * 200) + "."
+        second_text = " ".join(["second"] * 20) + "."
+        segs = [
+            {"text": first_text, "start": 10.0, "duration": 10.0},
+            {"text": second_text, "start": 123.0, "duration": 5.0},
+        ]
+
+        result = preprocess(segs)
+
+        assert len(result) == 2
+        assert result[0].start_time == 0.0
+        assert result[1].start_time == 123.0
+
     def test_text_window_dataclass_fields(self):
         w = TextWindow(text="hello", start_time=1.5)
         assert w.text == "hello"

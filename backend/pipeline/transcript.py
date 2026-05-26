@@ -25,13 +25,20 @@ def _fetch_via_youtube_transcript_api(video_id: str) -> list[dict[str, Any]]:
     """Synchronous helper; called in a thread pool to avoid blocking the event loop."""
     from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
 
-    raw = YouTubeTranscriptApi.get_transcript(video_id)
-    # The library already returns [{"text": str, "start": float, "duration": float}]
+    api = YouTubeTranscriptApi()
+    if hasattr(api, "fetch"):
+        raw = api.fetch(video_id)
+    else:
+        raw = YouTubeTranscriptApi.get_transcript(video_id)
+
+    if hasattr(raw, "to_raw_data"):
+        raw = raw.to_raw_data()
+
     return [
         {
-            "text": seg["text"],
-            "start": float(seg["start"]),
-            "duration": float(seg["duration"]),
+            "text": seg["text"] if isinstance(seg, dict) else seg.text,
+            "start": float(seg["start"] if isinstance(seg, dict) else seg.start),
+            "duration": float(seg["duration"] if isinstance(seg, dict) else seg.duration),
         }
         for seg in raw
     ]
@@ -121,6 +128,8 @@ async def get_transcript(video_id: str) -> list[dict[str, Any]]:
         segments = await loop.run_in_executor(
             None, _fetch_via_youtube_transcript_api, video_id
         )
+        if not segments:
+            raise RuntimeError("youtube-transcript-api returned no transcript segments")
         logger.info("Transcript retrieval: Path A succeeded for %s (%d segments)", video_id, len(segments))
         return segments
     except Exception as exc_a:
@@ -136,6 +145,8 @@ async def get_transcript(video_id: str) -> list[dict[str, Any]]:
         segments = await loop.run_in_executor(
             None, _fetch_via_yt_dlp_and_whisper, video_id
         )
+        if not segments:
+            raise RuntimeError("yt-dlp+faster-whisper returned no transcript segments")
         logger.info("Transcript retrieval: Path B succeeded for %s (%d segments)", video_id, len(segments))
         return segments
     except Exception as exc_b:
