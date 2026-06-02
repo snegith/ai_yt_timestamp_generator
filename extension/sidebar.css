@@ -1,6 +1,16 @@
 /* sidebar.css — YouTube Timestamp Generator sidebar panel styles */
 
 /* -------------------------------------------------------------------------
+   Push YouTube's secondary column (recommendations panel) left to make
+   room for the sidebar so they don't overlap.
+   YouTube renders the secondary panel inside #secondary on watch pages.
+   We reduce its right margin to accommodate our 280px sidebar.
+   ------------------------------------------------------------------------- */
+ytd-watch-flexy #secondary {
+  margin-right: 292px !important; /* 280px sidebar + 12px gap */
+}
+
+/* -------------------------------------------------------------------------
    Sidebar container
    Fixed to the right side of the viewport, positioned below the YouTube
    masthead (~56px) so it never overlaps the video player controls.

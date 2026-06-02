@@ -120,7 +120,7 @@ async def get_transcript(video_id: str) -> list[dict[str, Any]]:
     Returns:
         list of {"text": str, "start": float, "duration": float}
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     # --- Path A ---
     try:

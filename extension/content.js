@@ -7,7 +7,7 @@
 
 'use strict';
 
-const BACKEND_URL = 'http://127.0.0.1:8000';
+const BACKEND_URL = 'http://127.0.0.1:8000'; // TODO: replace with your Railway URL before deploying (e.g. 'https://your-app.up.railway.app')
 
 // ---------------------------------------------------------------------------
 // URL / time utilities

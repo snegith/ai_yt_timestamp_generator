@@ -3,8 +3,11 @@
   "version": "1.0.0",
   "description": "Property-based tests for the YouTube Timestamp Generator extension",
   "scripts": {
-    "test": "node --experimental-vm-modules tests/test_property_1.js",
-    "test:all": "node tests/test_property_1.js"
+    "test": "node tests/test_property_1.js && node tests/test_property_2.js && node tests/test_property_3.js && node tests/test_property_4.js",
+    "test:p1": "node tests/test_property_1.js",
+    "test:p2": "node tests/test_property_2.js",
+    "test:p3": "node tests/test_property_3.js",
+    "test:p4": "node tests/test_property_4.js"
   },
   "devDependencies": {
     "fast-check": "3.22.0",
