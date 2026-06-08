@@ -30,7 +30,11 @@ from hypothesis import given, settings, HealthCheck
 from hypothesis import strategies as st
 
 from pipeline.preprocess import TextWindow
-from pipeline.titles import generate_titles, _time_str_to_seconds
+from pipeline.titles import (
+    generate_titles,
+    _time_str_to_seconds,
+    _unique_seconds_to_time_str,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -162,8 +166,8 @@ def test_generate_titles_sorted_order_matches_sorted_start_times(
     **Validates: Requirements 10.1**
 
     The time values in the returned timestamps, when converted to seconds,
-    SHALL match the sorted (non-decreasing) order of the input start_times
-    (after integer truncation, since _seconds_to_time_str truncates to int).
+    SHALL match unique display labels derived from sorted start_times
+    (truncated to int, with +1s bumps when labels would collide).
     """
     windows = [
         TextWindow(text=f"Excerpt {i}.", start_time=t)
@@ -177,8 +181,11 @@ def test_generate_titles_sorted_order_matches_sorted_start_times(
          patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}):
         result = _run(generate_titles(windows))
 
-    # The expected sorted seconds (truncated to int, as _seconds_to_time_str does)
-    expected_sorted_seconds = sorted(int(t) for t in start_times)
+    used: set[str] = set()
+    expected_sorted_seconds = [
+        _to_seconds(_unique_seconds_to_time_str(t, used))
+        for t in sorted(start_times)
+    ]
     actual_seconds = [_to_seconds(ts.time) for ts in result]
 
     assert actual_seconds == expected_sorted_seconds, (

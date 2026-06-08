@@ -12,9 +12,27 @@ import asyncio
 import logging
 import os
 import tempfile
+import threading
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Loaded once on first Path B use (same pattern as boundaries._get_model).
+_whisper_model = None
+_whisper_lock = threading.Lock()
+
+
+def _get_whisper_model():
+    """Return the shared faster-whisper model, loading it on first call."""
+    global _whisper_model
+    if _whisper_model is None:
+        with _whisper_lock:
+            if _whisper_model is None:
+                from faster_whisper import WhisperModel  # type: ignore
+
+                logger.info("Loading faster-whisper model (base, cpu, int8)")
+                _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+    return _whisper_model
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +69,6 @@ def _fetch_via_youtube_transcript_api(video_id: str) -> list[dict[str, Any]]:
 def _fetch_via_yt_dlp_and_whisper(video_id: str) -> list[dict[str, Any]]:
     """Synchronous helper; called in a thread pool to avoid blocking the event loop."""
     import yt_dlp  # type: ignore
-    from faster_whisper import WhisperModel  # type: ignore
 
     url = f"https://www.youtube.com/watch?v={video_id}"
 
@@ -85,8 +102,7 @@ def _fetch_via_yt_dlp_and_whisper(video_id: str) -> list[dict[str, Any]]:
         if downloaded_file is None:
             raise RuntimeError("yt-dlp did not produce an audio file")
 
-        # Transcribe with faster-whisper (base model, word-level timestamps)
-        model = WhisperModel("base", device="cpu", compute_type="int8")
+        model = _get_whisper_model()
         segments_iter, _info = model.transcribe(
             downloaded_file,
             word_timestamps=True,  # Req 6.4: preserve word-level timing

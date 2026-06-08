@@ -8,6 +8,17 @@
 'use strict';
 
 const BACKEND_URL = 'http://127.0.0.1:8000'; // TODO: replace with your Railway URL before deploying (e.g. 'https://your-app.up.railway.app')
+/** Set to match backend API_KEY when deployed; leave empty for local dev without auth. */
+const API_KEY = '';
+
+/** @type {string|null} Last video ID seen on a /watch page (for SPA navigation resets). */
+let _lastVideoId = null;
+
+/** @type {AbortController|null} In-flight /generate request, aborted on navigation or re-generate. */
+let _generateAbortController = null;
+
+/** Max wait for backend pipeline (transcript + Whisper + Groq). */
+const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // URL / time utilities
@@ -29,6 +40,9 @@ function extractVideoId() {
  */
 function timeStringToSeconds(timeStr) {
   const parts = timeStr.split(':').map(Number);
+  if (parts.some((p) => Number.isNaN(p))) {
+    return null;
+  }
   if (parts.length === 2) {
     // M:SS
     return parts[0] * 60 + parts[1];
@@ -36,7 +50,7 @@ function timeStringToSeconds(timeStr) {
     // H:MM:SS
     return parts[0] * 3600 + parts[1] * 60 + parts[2];
   }
-  return 0;
+  return null;
 }
 
 /**
@@ -91,11 +105,11 @@ function injectSidebar() {
   // Wire up the generate button
   document.getElementById('yt-ts-generate-btn').addEventListener('click', () => {
     const videoId = extractVideoId();
-    if (!videoId) {
+    if (!videoId || !videoId.trim()) {
       showError('Could not extract video ID from URL');
       return;
     }
-    generateTimestamps(videoId);
+    generateTimestamps(videoId.trim());
   });
 }
 
@@ -107,6 +121,63 @@ function removeSidebar() {
   if (sidebar) {
     sidebar.remove();
   }
+}
+
+/**
+ * Abort any in-flight timestamp generation request.
+ */
+function cancelPendingGeneration() {
+  if (_generateAbortController) {
+    _generateAbortController.abort();
+    _generateAbortController = null;
+  }
+}
+
+/**
+ * Clear timestamp results, errors, and loading state (e.g. after video change).
+ */
+function resetSidebarResults() {
+  const list = document.getElementById('yt-ts-list');
+  const status = document.getElementById('yt-ts-status');
+
+  if (list) {
+    list.innerHTML = '';
+  }
+  if (status) {
+    status.textContent = '';
+    status.style.color = '';
+  }
+
+  setLoadingState(false);
+}
+
+/**
+ * Turn a FastAPI error `detail` (string or validation array) into readable text.
+ * @param {unknown} detail
+ * @param {number} status
+ * @returns {string}
+ */
+function formatApiError(detail, status) {
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => (item && typeof item.msg === 'string' ? item.msg : null))
+      .filter(Boolean);
+    if (messages.length > 0) {
+      return messages.join(' ');
+    }
+  }
+  if (detail && typeof detail === 'object') {
+    if (typeof detail.msg === 'string' && detail.msg.trim()) {
+      return detail.msg;
+    }
+    if (typeof detail.message === 'string' && detail.message.trim()) {
+      return detail.message;
+    }
+  }
+  return `Error ${status}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,9 +258,16 @@ function renderTimestamps(timestamps) {
     btn.appendChild(titleSpan);
 
     btn.addEventListener('click', () => {
-      const video = document.querySelector('video');
+      const seconds = timeStringToSeconds(time);
+      if (seconds === null) {
+        return;
+      }
+      const video =
+        document.querySelector('#movie_player video') ||
+        document.querySelector('video.html5-main-video') ||
+        document.querySelector('video');
       if (video) {
-        video.currentTime = timeStringToSeconds(time);
+        video.currentTime = seconds;
       }
     });
 
@@ -208,26 +286,74 @@ function renderTimestamps(timestamps) {
  * @returns {Promise<void>}
  */
 async function generateTimestamps(videoId) {
+  cancelPendingGeneration();
+
+  const controller = new AbortController();
+  _generateAbortController = controller;
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, FETCH_TIMEOUT_MS);
+
   setLoadingState(true);
   try {
+    /** @type {Record<string, string>} */
+    const headers = { 'Content-Type': 'application/json' };
+    if (API_KEY) {
+      headers['X-API-Key'] = API_KEY;
+    }
+
     const res = await fetch(`${BACKEND_URL}/generate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ video_id: videoId }),
+      signal: controller.signal,
     });
+
+    if (extractVideoId() !== videoId) {
+      return;
+    }
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      showError(err.detail || `Error ${res.status}`);
+      showError(formatApiError(err.detail, res.status));
       return;
     }
 
     const data = await res.json();
+    if (extractVideoId() !== videoId) {
+      return;
+    }
+
+    if (!Array.isArray(data.timestamps)) {
+      showError('Received an invalid response from the server.');
+      return;
+    }
+
     renderTimestamps(data.timestamps);
   } catch (e) {
+    if (e.name === 'AbortError') {
+      if (timedOut && extractVideoId() === videoId) {
+        showError('Request timed out. The video may be too long — please try again.');
+      }
+      return;
+    }
+    if (extractVideoId() !== videoId) {
+      return;
+    }
+    if (e instanceof SyntaxError || e instanceof TypeError) {
+      showError('Received an invalid response from the server.');
+      return;
+    }
     showError('Could not reach the server. Please try again.');
   } finally {
-    setLoadingState(false);
+    clearTimeout(timeoutId);
+    if (_generateAbortController === controller) {
+      _generateAbortController = null;
+      // Always clear loading for this request; a newer generate call sets it again.
+      setLoadingState(false);
+    }
   }
 }
 
@@ -235,10 +361,26 @@ async function generateTimestamps(videoId) {
 // Navigation listeners (YouTube is a SPA)
 // ---------------------------------------------------------------------------
 
+function onWatchPageReady() {
+  injectSidebar();
+
+  // Defer URL read — yt-navigate-finish can fire before location.search updates.
+  requestAnimationFrame(() => {
+    const videoId = extractVideoId();
+    if (videoId !== _lastVideoId) {
+      cancelPendingGeneration();
+      resetSidebarResults();
+      _lastVideoId = videoId;
+    }
+  });
+}
+
 function onNavigate() {
   if (window.location.pathname === '/watch') {
-    injectSidebar();
+    onWatchPageReady();
   } else {
+    cancelPendingGeneration();
+    _lastVideoId = null;
     removeSidebar();
   }
 }
@@ -251,5 +393,5 @@ window.addEventListener('popstate', onNavigate);
 // ---------------------------------------------------------------------------
 
 if (window.location.pathname === '/watch') {
-  injectSidebar();
+  onWatchPageReady();
 }

@@ -94,15 +94,28 @@ def preprocess(segments: list[dict]) -> list[TextWindow]:
     for seg in segments:
         raw_text: str = seg.get("text", "")
         start: float = float(seg.get("start", 0.0))
+        duration: float = float(seg.get("duration", 0.0))
 
         cleaned = strip_fillers(raw_text)
         if not cleaned:
             continue
 
-        for sent in nltk.sent_tokenize(cleaned):
-            sent = sent.strip()
-            if sent:
-                sentences.append((sent, start))
+        tokenized = [s.strip() for s in nltk.sent_tokenize(cleaned) if s.strip()]
+        if not tokenized:
+            continue
+
+        if len(tokenized) == 1:
+            sentences.append((tokenized[0], start))
+            continue
+
+        # Spread sentence start times proportionally across the segment duration.
+        weights = [len(s.split()) for s in tokenized]
+        total_weight = sum(weights) or 1
+        elapsed = 0.0
+        for sent, weight in zip(tokenized, weights):
+            sent_start = start + duration * (elapsed / total_weight)
+            elapsed += weight
+            sentences.append((sent, sent_start))
 
     if not sentences:
         return []

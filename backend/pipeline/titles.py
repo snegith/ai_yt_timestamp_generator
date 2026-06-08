@@ -3,17 +3,32 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 
 from groq import AsyncGroq
 
 from models import Timestamp
 from pipeline.preprocess import TextWindow
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Time formatting helper
 # ---------------------------------------------------------------------------
+
+def _unique_seconds_to_time_str(seconds: float, used: set[str]) -> str:
+    """Format *seconds* as a display time, bumping by 1s if the label is taken."""
+    total = int(seconds)
+    while True:
+        label = _seconds_to_time_str(float(total))
+        if label not in used:
+            used.add(label)
+            return label
+        total += 1
+
 
 def _seconds_to_time_str(seconds: float) -> str:
     """Format *seconds* as ``M:SS`` or ``H:MM:SS``.
@@ -59,6 +74,47 @@ def _build_user_prompt(boundary_windows: list[TextWindow]) -> str:
         'e.g. ["Title 1", "Title 2", ...]'
     )
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Groq response parsing
+# ---------------------------------------------------------------------------
+
+_FENCE_RE = re.compile(
+    r"```(?:json)?\s*\n?(.*?)\n?```",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _extract_json_array_payload(raw: str) -> str:
+    """Extract a JSON array string from plain or markdown-wrapped model output."""
+    text = raw.strip()
+    if not text:
+        raise ValueError("empty response")
+
+    fence = _FENCE_RE.search(text)
+    if fence:
+        text = fence.group(1).strip()
+    elif not text.lstrip().startswith("["):
+        start = text.find("[")
+        end = text.rfind("]")
+        if start != -1 and end != -1 and end > start:
+            text = text[start : end + 1]
+
+    return text
+
+
+def _parse_titles_from_response(raw_content: str, expected_count: int) -> list[str]:
+    """Parse Groq output into exactly *expected_count* title strings."""
+    payload = _extract_json_array_payload(raw_content)
+    titles = json.loads(payload)
+    if not isinstance(titles, list):
+        raise ValueError("Response is not a JSON array")
+    if len(titles) != expected_count:
+        raise ValueError(
+            f"Expected {expected_count} titles, got {len(titles)}"
+        )
+    return [str(title) for title in titles]
 
 
 # ---------------------------------------------------------------------------
@@ -110,28 +166,27 @@ async def generate_titles(boundary_windows: list[TextWindow]) -> list[Timestamp]
     except Exception as exc:
         raise RuntimeError(f"Groq API request failed: {exc}") from exc
 
-    raw_content = response.choices[0].message.content or ""
+    if not response.choices:
+        raise RuntimeError("Groq API returned an empty choices list")
+    message = response.choices[0].message
+    if message is None:
+        raise RuntimeError("Groq API returned no message")
+    raw_content = message.content or ""
 
-    # Parse the JSON array from the response.
     try:
-        titles: list[str] = json.loads(raw_content)
-        if not isinstance(titles, list):
-            raise ValueError("Response is not a JSON array")
-        if len(titles) != len(boundary_windows):
-            raise ValueError(
-                f"Expected {len(boundary_windows)} titles, got {len(titles)}"
-            )
+        titles = _parse_titles_from_response(raw_content, len(boundary_windows))
     except (json.JSONDecodeError, ValueError) as exc:
+        logger.error("Failed to parse Groq response: %s — raw: %r", exc, raw_content)
         raise RuntimeError(
-            f"Failed to parse Groq API response as JSON array: {exc}. "
-            f"Raw response: {raw_content!r}"
+            f"Failed to parse Groq API response as JSON array: {exc}"
         ) from exc
 
     # Build Timestamp objects and sort by ascending start time.
+    used_times: set[str] = set()
     timestamps = [
         Timestamp(
-            time=_seconds_to_time_str(window.start_time),
-            title=str(title),
+            time=_unique_seconds_to_time_str(window.start_time, used_times),
+            title=title,
         )
         for window, title in zip(boundary_windows, titles)
     ]
