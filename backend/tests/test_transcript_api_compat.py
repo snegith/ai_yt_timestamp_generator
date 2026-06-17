@@ -31,18 +31,62 @@ class _FetchedTranscript:
         return iter(self.snippets)
 
 
+def _make_transcript_list(transcript: MagicMock) -> MagicMock:
+    transcript_list = MagicMock()
+    transcript_list.find_manually_created_transcript.side_effect = Exception(
+        "no manual english"
+    )
+    transcript_list.find_generated_transcript.side_effect = Exception(
+        "no generated english"
+    )
+    transcript_list.find_transcript.return_value = transcript
+    return transcript_list
+
+
 def test_fetches_transcripts_with_current_youtube_transcript_api_shape():
+    transcript = MagicMock()
+    transcript.language_code = "en"
+    transcript.is_generated = False
+    transcript.fetch.return_value = _FetchedTranscript()
+
     api = MagicMock()
-    api.fetch.return_value = _FetchedTranscript()
+    api.list.return_value = _make_transcript_list(transcript)
 
     with patch("youtube_transcript_api.YouTubeTranscriptApi", return_value=api):
         result = _fetch_via_youtube_transcript_api("video123")
 
-    api.fetch.assert_called_once_with("video123")
+    api.list.assert_called_once_with("video123")
+    transcript.fetch.assert_called_once()
     assert result == [
         {"text": "Hello world", "start": 1.5, "duration": 2.0},
         {"text": "Next line", "start": 4.0, "duration": 1.25},
     ]
+
+
+def test_fetches_non_english_transcript_when_english_unavailable():
+    ko_transcript = MagicMock()
+    ko_transcript.language_code = "ko"
+    ko_transcript.is_generated = True
+    ko_transcript.fetch.return_value = _FetchedTranscript()
+
+    transcript_list = MagicMock()
+    transcript_list.find_manually_created_transcript.side_effect = Exception(
+        "no manual english"
+    )
+    transcript_list.find_generated_transcript.side_effect = Exception(
+        "no generated english"
+    )
+    transcript_list.find_transcript.side_effect = Exception("no english")
+    transcript_list.__iter__.return_value = iter([ko_transcript])
+
+    api = MagicMock()
+    api.list.return_value = transcript_list
+
+    with patch("youtube_transcript_api.YouTubeTranscriptApi", return_value=api):
+        result = _fetch_via_youtube_transcript_api("video123")
+
+    ko_transcript.fetch.assert_called_once()
+    assert len(result) == 2
 
 
 def test_fetches_transcripts_with_legacy_raw_dict_shape():

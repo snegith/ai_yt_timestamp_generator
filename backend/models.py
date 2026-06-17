@@ -8,6 +8,7 @@ _YOUTUBE_VIDEO_ID_PATTERN = r"^[A-Za-z0-9_-]{11}$"
 
 class GenerateRequest(BaseModel):
     video_id: str
+    force_retry: bool = False
 
     @field_validator('video_id')
     @classmethod

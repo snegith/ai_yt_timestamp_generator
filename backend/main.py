@@ -152,6 +152,10 @@ async def generate(
     Any RuntimeError raised by the pipeline is mapped to HTTP 502.
     """
     video_id = request.video_id
+    force_retry = request.force_retry
+
+    if force_retry:
+        cache.clear_failure(video_id)
 
     # --- Step 1: Cache lookup (Requirement 5.2) ---
     cached = cache.get(video_id)
@@ -159,10 +163,11 @@ async def generate(
         logger.info("Cache hit for video_id=%s", video_id)
         return GenerateResponse(timestamps=cached)
 
-    cached_failure = cache.get_failure(video_id)
-    if cached_failure is not None:
-        logger.info("Failure cache hit for video_id=%s", video_id)
-        raise HTTPException(status_code=502, detail=cached_failure)
+    if not force_retry:
+        cached_failure = cache.get_failure(video_id)
+        if cached_failure is not None:
+            logger.info("Failure cache hit for video_id=%s", video_id)
+            raise HTTPException(status_code=502, detail=cached_failure)
 
     logger.info("Cache miss for video_id=%s — running pipeline", video_id)
 
@@ -173,10 +178,11 @@ async def generate(
             logger.info("Cache hit after lock wait for video_id=%s", video_id)
             return GenerateResponse(timestamps=cached)
 
-        cached_failure = cache.get_failure(video_id)
-        if cached_failure is not None:
-            logger.info("Failure cache hit after lock wait for video_id=%s", video_id)
-            raise HTTPException(status_code=502, detail=cached_failure)
+        if not force_retry:
+            cached_failure = cache.get_failure(video_id)
+            if cached_failure is not None:
+                logger.info("Failure cache hit after lock wait for video_id=%s", video_id)
+                raise HTTPException(status_code=502, detail=cached_failure)
 
         # --- Step 2: Pipeline (Requirements 5.3, 6.x, 7.x, 8.x, 9.x) ---
         try:

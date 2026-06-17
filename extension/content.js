@@ -307,7 +307,7 @@ async function generateTimestamps(videoId) {
     const res = await fetch(`${BACKEND_URL}/generate`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ video_id: videoId }),
+      body: JSON.stringify({ video_id: videoId, force_retry: true }),
       signal: controller.signal,
     });
 

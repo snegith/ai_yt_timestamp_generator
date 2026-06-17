@@ -39,16 +39,11 @@ def _get_whisper_model():
 # Path A — youtube-transcript-api
 # ---------------------------------------------------------------------------
 
-def _fetch_via_youtube_transcript_api(video_id: str) -> list[dict[str, Any]]:
-    """Synchronous helper; called in a thread pool to avoid blocking the event loop."""
-    from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
+_PREFERRED_LANGUAGES = ("en", "en-US", "en-GB")
 
-    api = YouTubeTranscriptApi()
-    if hasattr(api, "fetch"):
-        raw = api.fetch(video_id)
-    else:
-        raw = YouTubeTranscriptApi.get_transcript(video_id)
 
+def _segments_from_raw(raw: Any) -> list[dict[str, Any]]:
+    """Normalise youtube-transcript-api output to segment dicts."""
     if hasattr(raw, "to_raw_data"):
         raw = raw.to_raw_data()
 
@@ -60,6 +55,52 @@ def _fetch_via_youtube_transcript_api(video_id: str) -> list[dict[str, Any]]:
         }
         for seg in raw
     ]
+
+
+def _select_transcript(transcript_list: Any) -> Any:
+    """Pick the best available transcript, preferring English then any language."""
+    for finder in (
+        transcript_list.find_manually_created_transcript,
+        transcript_list.find_generated_transcript,
+        transcript_list.find_transcript,
+    ):
+        try:
+            return finder(_PREFERRED_LANGUAGES)
+        except Exception:
+            continue
+
+    available = list(transcript_list)
+    if not available:
+        raise RuntimeError("No transcripts available for this video")
+
+    manual = [t for t in available if not t.is_generated]
+    return manual[0] if manual else available[0]
+
+
+def _fetch_via_youtube_transcript_api(video_id: str) -> list[dict[str, Any]]:
+    """Synchronous helper; called in a thread pool to avoid blocking the event loop."""
+    from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
+
+    api = YouTubeTranscriptApi()
+
+    if hasattr(api, "list"):
+        transcript_list = api.list(video_id)
+        transcript = _select_transcript(transcript_list)
+        raw = transcript.fetch()
+        logger.info(
+            "Transcript language %s (generated=%s) for %s",
+            transcript.language_code,
+            transcript.is_generated,
+            video_id,
+        )
+        return _segments_from_raw(raw)
+
+    if hasattr(api, "fetch"):
+        raw = api.fetch(video_id)
+        return _segments_from_raw(raw)
+
+    raw = YouTubeTranscriptApi.get_transcript(video_id)
+    return _segments_from_raw(raw)
 
 
 # ---------------------------------------------------------------------------

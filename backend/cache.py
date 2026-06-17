@@ -46,6 +46,11 @@ def set(video_id: str, timestamps: list[Timestamp]) -> None:
         _evict_expired_failures()
 
 
+def clear_failure(video_id: str) -> None:
+    """Remove a cached failure for *video_id* so the pipeline can run again."""
+    _failure_cache.pop(video_id, None)
+
+
 def get_failure(video_id: str) -> str | None:
     """Return a cached failure message if still within TTL, else None."""
     _evict_expired_failures()
