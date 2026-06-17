@@ -172,10 +172,4 @@ def preprocess(segments: list[dict]) -> list[TextWindow]:
             )
         )
 
-    # ------------------------------------------------------------------
-    # Step 3: Guarantee windows[0].start_time == 0.0 (design requirement).
-    # ------------------------------------------------------------------
-    if windows:
-        windows[0] = TextWindow(text=windows[0].text, start_time=0.0)
-
     return windows

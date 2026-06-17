@@ -100,11 +100,14 @@ cd C:\Users\My PC\Desktop\mini projects\yt_timestamps\backend
 python -m pip install -r requirements.txt
 ```
 
-### 2. Set the Groq API key
+### 2. Set the Groq API key (one-time)
 
 ```powershell
-$env:GROQ_API_KEY="your_groq_api_key"
+cd C:\Users\My PC\Desktop\mini projects\yt_timestamps\backend
+copy .env.example .env
 ```
+
+Edit `backend/.env` and replace `your_groq_api_key_here` with your real Groq key. The backend loads this file automatically on startup, so you do not need to set `$env:GROQ_API_KEY` every time you open a new terminal.
 
 ### 3. Start the backend
 
@@ -154,7 +157,7 @@ If you are testing the extension locally, use Chrome DevTools to inspect console
 ## Troubleshooting
 
 ### Backend fails to start
-- Make sure `GROQ_API_KEY` is set.
+- Make sure `backend/.env` exists and contains `GROQ_API_KEY=...` (copy from `.env.example`).
 - Ensure dependencies are installed with `python -m pip install -r requirements.txt`.
 
 ### Generate button hangs

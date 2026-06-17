@@ -1,0 +1,69 @@
+YouTube Timestamp Generator — Run Commands (Windows / PowerShell)
+================================================================
+
+PROJECT ROOT
+------------
+cd "C:\Users\My PC\Desktop\mini projects\yt_timestamps"
+
+
+BACKEND — FIRST-TIME SETUP
+--------------------------
+cd backend
+python -m pip install -r requirements.txt
+
+
+BACKEND — SET API KEY (one-time)
+--------------------------------
+cd backend
+copy .env.example .env
+# Edit .env and paste your real GROQ_API_KEY, then save.
+# The server loads backend/.env automatically on startup.
+
+
+BACKEND — START SERVER
+----------------------
+cd backend
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+
+Backend URL: http://127.0.0.1:8000
+
+
+CHROME EXTENSION — LOAD (one-time)
+----------------------------------
+1. Open chrome://extensions
+2. Turn on Developer mode
+3. Click "Load unpacked"
+4. Select this folder:
+   C:\Users\My PC\Desktop\mini projects\yt_timestamps\extension
+
+
+USE THE APP
+-----------
+1. Make sure the backend is running (see above)
+2. Open any YouTube watch page, e.g.:
+   https://www.youtube.com/watch?v=jNQXAC9IVRw
+3. Click "Generate Timestamps" in the sidebar
+
+
+RUN TESTS (optional)
+--------------------
+# Backend tests
+cd backend
+python -m pytest
+
+# Extension tests
+cd extension
+npm test
+
+
+TROUBLESHOOTING
+---------------
+- Backend won't start  -> create backend/.env from .env.example and set GROQ_API_KEY
+- WinError 10013 on port 8000 -> port is already in use (often a leftover uvicorn/python)
+    Check:  netstat -ano | findstr ":8000"
+    Kill:   taskkill /PID <pid_from_above> /F
+    Or use another port:
+      python -m uvicorn main:app --reload --host 127.0.0.1 --port 8001
+    (If you change the port, also update BACKEND_URL in extension/content.js)
+- Generate button fails -> confirm backend is running on http://127.0.0.1:8000
+- Whisper fallback slow -> install FFmpeg and add it to PATH

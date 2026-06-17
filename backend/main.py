@@ -17,8 +17,14 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException
+
+# Load backend/.env once at import time so local dev does not need
+# $env:GROQ_API_KEY=... in every new terminal session.
+load_dotenv(Path(__file__).resolve().parent / ".env")
 from fastapi.middleware.cors import CORSMiddleware
 
 import cache
@@ -86,12 +92,22 @@ app.add_middleware(
 
 # One lock per video_id so concurrent cache misses run the pipeline only once.
 _pipeline_locks: dict[str, asyncio.Lock] = {}
+_MAX_PIPELINE_LOCKS = 500
 
 
 def _pipeline_lock(video_id: str) -> asyncio.Lock:
     if video_id not in _pipeline_locks:
+        _prune_pipeline_locks()
         _pipeline_locks[video_id] = asyncio.Lock()
     return _pipeline_locks[video_id]
+
+
+def _prune_pipeline_locks() -> None:
+    """Drop unlocked per-video locks, especially when the map grows large."""
+    if len(_pipeline_locks) <= _MAX_PIPELINE_LOCKS:
+        return
+    for vid in [v for v, lock in _pipeline_locks.items() if not lock.locked()]:
+        _pipeline_locks.pop(vid, None)
 
 
 def _release_pipeline_lock(video_id: str) -> None:
@@ -99,6 +115,7 @@ def _release_pipeline_lock(video_id: str) -> None:
     lock = _pipeline_locks.get(video_id)
     if lock is not None and not lock.locked():
         _pipeline_locks.pop(video_id, None)
+    _prune_pipeline_locks()
 
 
 def _verify_api_key(x_api_key: str | None = Header(default=None)) -> None:
@@ -171,41 +188,43 @@ async def generate(
 
     logger.info("Cache miss for video_id=%s — running pipeline", video_id)
 
-    async with _pipeline_lock(video_id):
-        # Another request may have finished the pipeline while we waited.
-        cached = cache.get(video_id)
-        if cached is not None:
-            logger.info("Cache hit after lock wait for video_id=%s", video_id)
-            return GenerateResponse(timestamps=cached)
+    timestamps = None
+    try:
+        async with _pipeline_lock(video_id):
+            # Another request may have finished the pipeline while we waited.
+            cached = cache.get(video_id)
+            if cached is not None:
+                logger.info("Cache hit after lock wait for video_id=%s", video_id)
+                return GenerateResponse(timestamps=cached)
 
-        if not force_retry:
-            cached_failure = cache.get_failure(video_id)
-            if cached_failure is not None:
-                logger.info("Failure cache hit after lock wait for video_id=%s", video_id)
-                raise HTTPException(status_code=502, detail=cached_failure)
+            if not force_retry:
+                cached_failure = cache.get_failure(video_id)
+                if cached_failure is not None:
+                    logger.info("Failure cache hit after lock wait for video_id=%s", video_id)
+                    raise HTTPException(status_code=502, detail=cached_failure)
 
-        # --- Step 2: Pipeline (Requirements 5.3, 6.x, 7.x, 8.x, 9.x) ---
-        try:
-            timestamps = await _run_pipeline(video_id)
-        except RuntimeError as exc:
-            logger.error("Pipeline error for video_id=%s: %s", video_id, exc)
-            cache.set_failure(video_id, str(exc))
-            raise HTTPException(status_code=502, detail=str(exc))
-        except Exception as exc:
-            logger.exception("Unexpected pipeline error for video_id=%s", video_id)
-            detail = f"Pipeline failed: {exc}"
-            cache.set_failure(video_id, detail)
-            raise HTTPException(status_code=502, detail=detail) from exc
+            # --- Step 2: Pipeline (Requirements 5.3, 6.x, 7.x, 8.x, 9.x) ---
+            try:
+                timestamps = await _run_pipeline(video_id)
+            except RuntimeError as exc:
+                logger.error("Pipeline error for video_id=%s: %s", video_id, exc)
+                cache.set_failure(video_id, str(exc))
+                raise HTTPException(status_code=502, detail=str(exc))
+            except Exception as exc:
+                logger.exception("Unexpected pipeline error for video_id=%s", video_id)
+                detail = f"Pipeline failed: {exc}"
+                cache.set_failure(video_id, detail)
+                raise HTTPException(status_code=502, detail=detail) from exc
 
-        # --- Step 3: Store in cache (Requirement 5.3) ---
-        cache.set(video_id, timestamps)
-        logger.info(
-            "Pipeline complete for video_id=%s — %d timestamps cached",
-            video_id,
-            len(timestamps),
-        )
-
-    _release_pipeline_lock(video_id)
+            # --- Step 3: Store in cache (Requirement 5.3) ---
+            cache.set(video_id, timestamps)
+            logger.info(
+                "Pipeline complete for video_id=%s — %d timestamps cached",
+                video_id,
+                len(timestamps),
+            )
+    finally:
+        _release_pipeline_lock(video_id)
 
     # --- Step 4: Return response ---
     return GenerateResponse(timestamps=timestamps)

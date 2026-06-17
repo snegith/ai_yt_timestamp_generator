@@ -96,16 +96,16 @@ class TestPreprocess:
         assert isinstance(result, list)
         assert all(isinstance(w, TextWindow) for w in result)
 
-    def test_first_window_start_time_is_zero(self):
+    def test_first_window_start_time_matches_first_segment(self):
         segs = _make_segments(10, 30)
         result = preprocess(segs)
-        assert result[0].start_time == 0.0
+        assert result[0].start_time == segs[0]["start"]
 
     def test_single_short_segment_produces_one_window(self):
         segs = [{"text": "Hello world.", "start": 5.0, "duration": 2.0}]
         result = preprocess(segs)
         assert len(result) == 1
-        assert result[0].start_time == 0.0  # forced to 0
+        assert result[0].start_time == 5.0
 
     def test_window_text_contains_content(self):
         segs = [{"text": "The quick brown fox jumps.", "start": 0.0, "duration": 3.0}]
@@ -171,7 +171,7 @@ class TestPreprocess:
         result = preprocess(segs)
 
         assert len(result) == 2
-        assert result[0].start_time == 0.0
+        assert result[0].start_time == 10.0
         assert result[1].start_time == 123.0
 
     def test_text_window_dataclass_fields(self):

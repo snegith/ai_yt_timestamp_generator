@@ -48,7 +48,19 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 # Boundary detection
 # ---------------------------------------------------------------------------
 
-_SIMILARITY_THRESHOLD = 0.35
+# How many standard deviations below the mean a consecutive-window similarity
+# must fall to count as a topic boundary. A purely *absolute* threshold (the
+# old 0.35 value) does not work in practice: consecutive ~200-word windows from
+# the same video share enough vocabulary that all-MiniLM-L6-v2 almost always
+# scores them well above 0.35, so virtually nothing was ever flagged as a
+# boundary and most videos collapsed to 1-2 timestamps. An *adaptive* cutoff
+# computed from each video's own similarity distribution flags the relative
+# dips (the real topic changes) regardless of the absolute baseline.
+_STD_FACTOR = 0.5
+
+# Videos with very few windows are too short to analyse meaningfully — treat
+# every window as its own chapter rather than collapsing to a single one.
+_MIN_WINDOWS_FOR_ANALYSIS = 4
 
 
 def detect_boundaries(windows: list[TextWindow]) -> list[TextWindow]:
@@ -58,8 +70,16 @@ def detect_boundaries(windows: list[TextWindow]) -> list[TextWindow]:
     ---------
     1. Encode every window's text with ``all-MiniLM-L6-v2``.
     2. For each consecutive pair ``(i-1, i)``, compute cosine similarity.
-    3. Mark window ``i`` as a boundary when similarity < 0.35.
-    4. Always include ``windows[0]`` regardless of similarity.
+    3. Compute an *adaptive* cutoff from the per-video similarity distribution:
+       ``cutoff = mean(similarities) - _STD_FACTOR * std(similarities)``.
+    4. Mark window ``i`` as a boundary when its similarity to the previous
+       window falls below that cutoff (i.e. a relative dip = topic change).
+    5. Always include ``windows[0]`` regardless of similarity.
+
+    Using an adaptive cutoff (instead of a fixed absolute threshold) means the
+    detector flags the genuinely low-similarity transitions for *this* video,
+    which produces a sensible number of chapters across videos with very
+    different baseline similarity levels.
 
     Parameters
     ----------
@@ -76,17 +96,30 @@ def detect_boundaries(windows: list[TextWindow]) -> list[TextWindow]:
     if not windows:
         return []
 
+    # Too few windows to compute a meaningful distribution — keep them all.
+    if len(windows) < _MIN_WINDOWS_FOR_ANALYSIS:
+        return list(windows)
+
     model = _get_model()
 
     # Encode all window texts in a single batched call for efficiency.
     texts = [w.text for w in windows]
     embeddings: np.ndarray = model.encode(texts, convert_to_numpy=True)
 
+    # Cosine similarity between each consecutive pair (length == len(windows) - 1).
+    similarities = np.array(
+        [
+            cosine_similarity(embeddings[i - 1], embeddings[i])
+            for i in range(1, len(windows))
+        ]
+    )
+
+    cutoff = float(similarities.mean()) - _STD_FACTOR * float(similarities.std())
+
     boundary_windows: list[TextWindow] = [windows[0]]
 
     for i in range(1, len(windows)):
-        sim = cosine_similarity(embeddings[i - 1], embeddings[i])
-        if sim < _SIMILARITY_THRESHOLD:
+        if similarities[i - 1] < cutoff:
             boundary_windows.append(windows[i])
 
     return boundary_windows

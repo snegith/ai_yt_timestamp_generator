@@ -1,13 +1,14 @@
 """
-Property-Based Test for Boundary Detection Threshold and First-Window Invariant
-(Property 10)
+Property-Based Test for Adaptive Topic Boundary Detection (Property 10)
 
 **Validates: Requirements 8.3, 8.4, 10.3**
 
-Property 10: Topic Boundary Detection Threshold and First-Window Invariant
-`detect_boundaries(windows)` includes window at index i > 0 iff
-cosine_similarity(embed[i-1], embed[i]) < 0.35, always includes windows[0],
-and result is non-empty for non-empty input.
+Property 10: Adaptive Topic Boundary Detection and First-Window Invariant
+For a sequence of windows long enough to analyse, `detect_boundaries(windows)`
+includes window at index i > 0 iff the cosine similarity between
+embed[i-1] and embed[i] falls below the per-video adaptive cutoff
+(mean - _STD_FACTOR * std of the consecutive similarities). It always includes
+windows[0] and returns a non-empty list for non-empty input.
 """
 
 from __future__ import annotations
@@ -26,7 +27,12 @@ from hypothesis import given, settings, HealthCheck
 from hypothesis import strategies as st
 
 from pipeline.preprocess import TextWindow
-from pipeline.boundaries import cosine_similarity, detect_boundaries, _SIMILARITY_THRESHOLD
+from pipeline.boundaries import (
+    cosine_similarity,
+    detect_boundaries,
+    _STD_FACTOR,
+    _MIN_WINDOWS_FOR_ANALYSIS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -49,34 +55,22 @@ def _build_embeddings_for_similarities(similarities: list[float]) -> np.ndarray:
     Build an embedding matrix such that cosine_similarity(embed[i], embed[i+1])
     equals similarities[i] for each i.
 
-    Strategy:
-      - embed[0] is a unit vector along axis 0.
-      - For each subsequent embed[i+1], we construct a vector in the plane
-        spanned by embed[i] and a fresh perpendicular axis so that
-        cosine_similarity(embed[i], embed[i+1]) == similarities[i].
-
-    This gives exact control over pairwise similarities while keeping each
-    embedding as a unit vector.
+    Each window gets its own perpendicular axis so that controlling one pair's
+    similarity does not disturb the others. Every embedding is a unit vector.
     """
     n = len(similarities) + 1  # total number of windows
-    # Each window needs its own 2D subspace to avoid cross-pair interference.
-    # Dimensions needed: 1 (for embed[0]) + 2 * len(similarities) for the rest.
     actual_dim = max(4, 1 + 2 * len(similarities))
     embeddings = np.zeros((n, actual_dim), dtype=float)
 
-    # embed[0] = unit vector in dimension 0
     embeddings[0, 0] = 1.0
 
     for i, s in enumerate(similarities):
         s_clamped = float(np.clip(s, -1.0, 1.0))
-        # embed[i+1] = s_clamped * embed[i] + sin(theta) * perp_unit
-        # where perp_unit is a fresh unit vector orthogonal to everything so far.
-        perp_dim = 1 + 2 * i + 1  # a unique dimension for this pair's perpendicular
+        perp_dim = 1 + 2 * i + 1
         sin_theta = np.sqrt(max(0.0, 1.0 - s_clamped ** 2))
         embeddings[i + 1] = s_clamped * embeddings[i]
         embeddings[i + 1, perp_dim] += sin_theta
 
-        # Normalize to unit vector
         norm = np.linalg.norm(embeddings[i + 1])
         if norm > 0:
             embeddings[i + 1] /= norm
@@ -84,34 +78,30 @@ def _build_embeddings_for_similarities(similarities: list[float]) -> np.ndarray:
     return embeddings
 
 
+def _adaptive_cutoff(similarities: list[float]) -> float:
+    """Mirror the cutoff computed inside detect_boundaries()."""
+    sims = np.asarray(similarities, dtype=float)
+    return float(sims.mean()) - _STD_FACTOR * float(sims.std())
+
+
 # ---------------------------------------------------------------------------
 # Strategies
 # ---------------------------------------------------------------------------
 
-# Similarity strictly below the threshold → window should be included
-_below_threshold = st.floats(
+_similarity_value = st.floats(
     min_value=-1.0,
-    max_value=_SIMILARITY_THRESHOLD - 1e-9,
-    allow_nan=False,
-    allow_infinity=False,
-)
-
-# Similarity at or above the threshold → window should NOT be included
-_above_or_equal_threshold = st.floats(
-    min_value=_SIMILARITY_THRESHOLD,
     max_value=1.0,
     allow_nan=False,
     allow_infinity=False,
 )
 
-# A list of per-pair similarity values (1–20 pairs → 2–21 windows)
+# At least (_MIN_WINDOWS_FOR_ANALYSIS - 1) pairs so the analysed branch runs.
 _similarity_list_strategy = st.lists(
-    st.one_of(_below_threshold, _above_or_equal_threshold),
-    min_size=1,
+    _similarity_value,
+    min_size=_MIN_WINDOWS_FOR_ANALYSIS - 1,
     max_size=20,
 )
 
-# Window count for tests that only need a count (1–21 windows)
 _window_count_strategy = st.integers(min_value=1, max_value=21)
 
 
@@ -129,7 +119,6 @@ def test_first_window_always_included(n: int) -> None:
     windows[0] as the first element of the result.
     """
     windows = [_make_window(f"window {i}", float(i * 10)) for i in range(n)]
-    # Use orthogonal unit vectors so all pairwise similarities = 0.0 < 0.35
     embeddings = np.eye(n, max(n, 1), dtype=float)
 
     mock_model = _make_mock_model(embeddings)
@@ -155,10 +144,10 @@ def test_result_non_empty_for_non_empty_input(n: int) -> None:
     **Validates: Requirements 10.3**
 
     For any non-empty list of windows, detect_boundaries() SHALL return a
-    non-empty list (because windows[0] is always included).
+    non-empty list (windows[0] is always included).
     """
     windows = [_make_window(f"window {i}", float(i * 10)) for i in range(n)]
-    # All identical unit vectors → similarity = 1.0 >= 0.35 → only windows[0] included
+    # Identical unit vectors → all similarities equal → std == 0 → only windows[0].
     embeddings = np.ones((n, 4), dtype=float)
     embeddings /= np.linalg.norm(embeddings[0])
 
@@ -174,33 +163,33 @@ def test_result_non_empty_for_non_empty_input(n: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Property 10c: window at index i > 0 included iff similarity < 0.35
+# Property 10c: window i>0 included iff similarity < adaptive cutoff
 # ---------------------------------------------------------------------------
 
 @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
 @given(similarities=_similarity_list_strategy)
-def test_boundary_threshold_iff_similarity_below_threshold(
+def test_boundary_threshold_iff_similarity_below_adaptive_cutoff(
     similarities: list[float],
 ) -> None:
     """
     **Validates: Requirements 8.3**
 
-    For any sequence of windows with controlled embeddings, detect_boundaries()
-    SHALL include window[i] (i > 0) if and only if
-    cosine_similarity(embed[i-1], embed[i]) < 0.35.
+    For a sequence long enough to analyse, detect_boundaries() SHALL include
+    window[i] (i > 0) iff cosine_similarity(embed[i-1], embed[i]) is below the
+    per-video adaptive cutoff (mean - _STD_FACTOR * std).
     """
     n = len(similarities) + 1
     windows = [_make_window(f"window {i}", float(i * 10)) for i in range(n)]
 
     embeddings = _build_embeddings_for_similarities(similarities)
 
-    # Sanity-check our embedding construction
-    for i, expected_sim in enumerate(similarities):
-        actual_sim = cosine_similarity(embeddings[i], embeddings[i + 1])
-        assert abs(actual_sim - float(np.clip(expected_sim, -1.0, 1.0))) < 1e-6, (
-            f"Embedding construction error at pair {i}: "
-            f"expected similarity {expected_sim:.6f}, got {actual_sim:.6f}"
-        )
+    # Recompute the actual similarities from the constructed embeddings so the
+    # cutoff in the test exactly matches what detect_boundaries() computes.
+    actual_sims = [
+        cosine_similarity(embeddings[i], embeddings[i + 1])
+        for i in range(len(similarities))
+    ]
+    cutoff = _adaptive_cutoff(actual_sims)
 
     mock_model = _make_mock_model(embeddings)
 
@@ -209,79 +198,20 @@ def test_boundary_threshold_iff_similarity_below_threshold(
 
     result_ids = {id(w) for w in result}
 
-    # windows[0] must always be present
     assert id(windows[0]) in result_ids, "windows[0] must always be in the result"
 
-    # For each i > 0, verify inclusion iff similarity < threshold
-    for i, sim in enumerate(similarities):
-        actual_sim = cosine_similarity(embeddings[i], embeddings[i + 1])
+    for i, sim in enumerate(actual_sims):
         window = windows[i + 1]
-        should_include = actual_sim < _SIMILARITY_THRESHOLD
-
+        should_include = sim < cutoff
         if should_include:
             assert id(window) in result_ids, (
                 f"Window {i + 1} should be included "
-                f"(similarity={actual_sim:.6f} < {_SIMILARITY_THRESHOLD}), "
-                f"but was absent from result"
+                f"(similarity={sim:.6f} < cutoff={cutoff:.6f}), but was absent"
             )
         else:
             assert id(window) not in result_ids, (
                 f"Window {i + 1} should NOT be included "
-                f"(similarity={actual_sim:.6f} >= {_SIMILARITY_THRESHOLD}), "
-                f"but was present in result"
-            )
-
-
-# ---------------------------------------------------------------------------
-# Property 10 combined: all three sub-properties together
-# ---------------------------------------------------------------------------
-
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
-@given(similarities=_similarity_list_strategy)
-def test_boundary_detection_combined_property(similarities: list[float]) -> None:
-    """
-    **Validates: Requirements 8.3, 8.4, 10.3**
-
-    Combined Property 10: for any sequence of windows with controlled embeddings,
-    detect_boundaries() SHALL:
-      (a) always include windows[0] as the first element,
-      (b) return a non-empty result for non-empty input,
-      (c) include window[i] (i > 0) iff cosine_similarity(embed[i-1], embed[i]) < 0.35.
-    """
-    n = len(similarities) + 1
-    windows = [_make_window(f"window {i}", float(i * 10)) for i in range(n)]
-    embeddings = _build_embeddings_for_similarities(similarities)
-
-    mock_model = _make_mock_model(embeddings)
-
-    with patch("pipeline.boundaries._get_model", return_value=mock_model):
-        result = detect_boundaries(windows)
-
-    # (a) windows[0] always first
-    assert result[0] is windows[0], (
-        "windows[0] must be the first element of the result"
-    )
-
-    # (b) non-empty result
-    assert len(result) >= 1, "Result must be non-empty for non-empty input"
-
-    result_ids = {id(w) for w in result}
-
-    # (c) threshold iff condition
-    for i, sim in enumerate(similarities):
-        actual_sim = cosine_similarity(embeddings[i], embeddings[i + 1])
-        window = windows[i + 1]
-        should_include = actual_sim < _SIMILARITY_THRESHOLD
-
-        if should_include:
-            assert id(window) in result_ids, (
-                f"Window {i + 1} should be included (sim={actual_sim:.6f} < "
-                f"{_SIMILARITY_THRESHOLD}), but was absent"
-            )
-        else:
-            assert id(window) not in result_ids, (
-                f"Window {i + 1} should NOT be included (sim={actual_sim:.6f} >= "
-                f"{_SIMILARITY_THRESHOLD}), but was present"
+                f"(similarity={sim:.6f} >= cutoff={cutoff:.6f}), but was present"
             )
 
 
@@ -299,21 +229,29 @@ def test_empty_windows_returns_empty() -> None:
 def test_single_window_returns_that_window() -> None:
     """A single window must always be returned (it is windows[0])."""
     window = _make_window("only window", 0.0)
-    embeddings = np.array([[1.0, 0.0, 0.0, 0.0]])
-
-    mock_model = _make_mock_model(embeddings)
-
-    with patch("pipeline.boundaries._get_model", return_value=mock_model):
+    with patch("pipeline.boundaries._get_model") as mock_get_model:
         result = detect_boundaries([window])
-
     assert result == [window], f"Expected [{window}], got {result}"
+    # Too few windows to analyse → the model is never invoked.
+    mock_get_model.assert_not_called()
 
 
-def test_all_high_similarity_only_first_window_returned() -> None:
-    """When all consecutive similarities are >= 0.35, only windows[0] is returned."""
-    n = 5
+def test_few_windows_all_returned_without_embedding() -> None:
+    """Fewer than _MIN_WINDOWS_FOR_ANALYSIS windows are all kept as chapters."""
+    n = _MIN_WINDOWS_FOR_ANALYSIS - 1
     windows = [_make_window(f"w{i}", float(i)) for i in range(n)]
-    # All identical embeddings → similarity = 1.0 >= 0.35
+
+    with patch("pipeline.boundaries._get_model") as mock_get_model:
+        result = detect_boundaries(windows)
+
+    assert result == windows, f"Expected all {n} windows, got {len(result)}"
+    mock_get_model.assert_not_called()
+
+
+def test_uniform_similarity_returns_only_first_window() -> None:
+    """When all consecutive similarities are identical, std == 0 → only windows[0]."""
+    n = 6
+    windows = [_make_window(f"w{i}", float(i)) for i in range(n)]
     embeddings = np.ones((n, 4), dtype=float)
     embeddings /= np.linalg.norm(embeddings[0])
 
@@ -323,75 +261,24 @@ def test_all_high_similarity_only_first_window_returned() -> None:
         result = detect_boundaries(windows)
 
     assert result == [windows[0]], (
-        f"With all similarities >= 0.35, only windows[0] should be returned, "
-        f"but got {len(result)} windows"
+        f"Uniform similarity should yield only windows[0], got {len(result)} windows"
     )
 
 
-def test_all_low_similarity_all_windows_returned() -> None:
-    """When all consecutive similarities are < 0.35, all windows are returned."""
-    n = 5
-    windows = [_make_window(f"w{i}", float(i)) for i in range(n)]
-    # Orthogonal unit vectors → similarity = 0.0 < 0.35
-    embeddings = np.eye(n, dtype=float)
+def test_clear_topic_dip_is_flagged() -> None:
+    """A single sharp similarity dip is detected as a boundary."""
+    # High similarity everywhere except one clear dip at pair index 2.
+    similarities = [0.8, 0.8, 0.1, 0.8, 0.8]
+    n = len(similarities) + 1
+    windows = [_make_window(f"w{i}", float(i * 60)) for i in range(n)]
+    embeddings = _build_embeddings_for_similarities(similarities)
 
     mock_model = _make_mock_model(embeddings)
 
     with patch("pipeline.boundaries._get_model", return_value=mock_model):
         result = detect_boundaries(windows)
 
-    assert result == windows, (
-        f"With all similarities < 0.35, all {n} windows should be returned, "
-        f"but got {len(result)}"
-    )
-
-
-def test_threshold_exact_value_not_included() -> None:
-    """A window with similarity exactly equal to 0.35 should NOT be included."""
-    windows = [_make_window("w0", 0.0), _make_window("w1", 10.0)]
-    # Construct embeddings with cosine similarity = exactly 0.35
-    theta = np.arccos(0.35)
-    embeddings = np.array([
-        [1.0, 0.0],
-        [np.cos(theta), np.sin(theta)],
-    ])
-
-    mock_model = _make_mock_model(embeddings)
-
-    with patch("pipeline.boundaries._get_model", return_value=mock_model):
-        result = detect_boundaries(windows)
-
-    actual_sim = cosine_similarity(embeddings[0], embeddings[1])
-    assert abs(actual_sim - 0.35) < 1e-9, f"Expected similarity 0.35, got {actual_sim}"
-
-    # windows[1] should NOT be included (similarity == 0.35, not strictly < 0.35)
-    assert result == [windows[0]], (
-        f"Window with similarity exactly 0.35 should NOT be included, "
-        f"but result was {result}"
-    )
-
-
-def test_threshold_just_below_is_included() -> None:
-    """A window with similarity just below 0.35 should be included."""
-    windows = [_make_window("w0", 0.0), _make_window("w1", 10.0)]
-    target_sim = 0.35 - 1e-7
-    theta = np.arccos(target_sim)
-    embeddings = np.array([
-        [1.0, 0.0],
-        [np.cos(theta), np.sin(theta)],
-    ])
-
-    mock_model = _make_mock_model(embeddings)
-
-    with patch("pipeline.boundaries._get_model", return_value=mock_model):
-        result = detect_boundaries(windows)
-
-    actual_sim = cosine_similarity(embeddings[0], embeddings[1])
-    assert actual_sim < _SIMILARITY_THRESHOLD, (
-        f"Expected similarity < 0.35, got {actual_sim}"
-    )
-
-    assert result == windows, (
-        f"Window with similarity just below 0.35 should be included, "
-        f"but result was {result}"
-    )
+    result_ids = {id(w) for w in result}
+    # windows[3] follows the dip (pair index 2 == similarity between w2 and w3).
+    assert id(windows[3]) in result_ids, "The window after a clear dip must be a boundary"
+    assert id(windows[0]) in result_ids, "windows[0] must always be included"

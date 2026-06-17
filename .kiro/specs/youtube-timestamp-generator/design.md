@@ -48,7 +48,7 @@ The system has two independently deployable components:
 │                  200-word windowing                          │
 │             3. Topic Boundary Detection                      │
 │                  all-MiniLM-L6-v2 embeddings                 │
-│                  cosine similarity < 0.35 threshold          │
+│                  cosine similarity < adaptive cutoff         │
 │             4. Title Generation                              │
 │                  Groq API (single batched prompt)            │
 │             5. Format & Cache result                         │
@@ -85,7 +85,8 @@ Preprocessing
 Boundary Detection
     SentenceTransformer.encode([window.text]) → embeddings
     cosine_similarity(embed[i-1], embed[i]) for each pair
-    mark boundary where similarity < 0.35
+    cutoff = mean(similarities) - STD_FACTOR * std(similarities)
+    mark boundary where similarity < cutoff (per-video adaptive)
     always include windows[0]
     → [TextWindow]  (boundary windows only)
     │
@@ -566,9 +567,9 @@ Property tests use randomized inputs to verify universal invariants. Each test r
 
 ---
 
-### Property 10: Topic Boundary Detection Threshold and First-Window Invariant
+### Property 10: Adaptive Topic Boundary Detection and First-Window Invariant
 
-*For any* sequence of text windows, `detect_boundaries(windows)` SHALL include a window at index `i > 0` in the result if and only if `cosine_similarity(embed[i-1], embed[i]) < 0.35`, SHALL always include `windows[0]`, and the result SHALL be non-empty for any non-empty input.
+*For any* sequence of text windows long enough to analyse, `detect_boundaries(windows)` SHALL include a window at index `i > 0` in the result if and only if `cosine_similarity(embed[i-1], embed[i])` is below the per-video adaptive cutoff (`mean(similarities) - STD_FACTOR * std(similarities)`), SHALL always include `windows[0]`, and the result SHALL be non-empty for any non-empty input.
 
 **Validates: Requirements 8.3, 8.4, 10.3**
 

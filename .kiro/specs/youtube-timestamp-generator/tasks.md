@@ -40,15 +40,15 @@ Implement a Chrome Extension (MV3, Vanilla JS) and a FastAPI backend that togeth
     - **Validates: Requirements 7.1**
 
 - [x] 5. Implement topic boundary detection pipeline module
-  - [x] 5.1 Create `backend/pipeline/boundaries.py` with `cosine_similarity(a, b)` and `detect_boundaries(windows)` using `all-MiniLM-L6-v2` embeddings and a 0.35 threshold; always include `windows[0]`
+  - [x] 5.1 Create `backend/pipeline/boundaries.py` with `cosine_similarity(a, b)` and `detect_boundaries(windows)` using `all-MiniLM-L6-v2` embeddings and a per-video adaptive cutoff (`mean - STD_FACTOR * std` of consecutive similarities); always include `windows[0]`
     - _Requirements: 8.1, 8.2, 8.3, 8.4_
   - [x] 5.2 Write property test for cosine similarity symmetry and bounds (Property 9)
     - **Property 9: Cosine Similarity Symmetry and Bounds**
     - For any two non-zero vectors, `cosine_similarity(a, b) == cosine_similarity(b, a)` and result is in `[-1.0, 1.0]`
     - **Validates: Requirements 8.2**
   - [x] 5.3 Write property test for boundary detection threshold and first-window invariant (Property 10)
-    - **Property 10: Topic Boundary Detection Threshold and First-Window Invariant**
-    - `detect_boundaries()` includes window at index `i > 0` iff similarity < 0.35, always includes `windows[0]`, and result is non-empty for non-empty input
+    - **Property 10: Adaptive Topic Boundary Detection and First-Window Invariant**
+    - `detect_boundaries()` includes window at index `i > 0` iff similarity is below the per-video adaptive cutoff (`mean - STD_FACTOR * std`), always includes `windows[0]`, and result is non-empty for non-empty input
     - **Validates: Requirements 8.3, 8.4, 10.3**
 
 - [x] 6. Implement title generation pipeline module

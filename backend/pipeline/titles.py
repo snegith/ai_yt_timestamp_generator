@@ -19,17 +19,6 @@ logger = logging.getLogger(__name__)
 # Time formatting helper
 # ---------------------------------------------------------------------------
 
-def _unique_seconds_to_time_str(seconds: float, used: set[str]) -> str:
-    """Format *seconds* as a display time, bumping by 1s if the label is taken."""
-    total = int(seconds)
-    while True:
-        label = _seconds_to_time_str(float(total))
-        if label not in used:
-            used.add(label)
-            return label
-        total += 1
-
-
 def _seconds_to_time_str(seconds: float) -> str:
     """Format *seconds* as ``M:SS`` or ``H:MM:SS``.
 
@@ -182,16 +171,14 @@ async def generate_titles(boundary_windows: list[TextWindow]) -> list[Timestamp]
         ) from exc
 
     # Build Timestamp objects and sort by ascending start time.
-    used_times: set[str] = set()
+    pairs = sorted(zip(boundary_windows, titles), key=lambda item: item[0].start_time)
     timestamps = [
         Timestamp(
-            time=_unique_seconds_to_time_str(window.start_time, used_times),
+            time=_seconds_to_time_str(window.start_time),
             title=title,
         )
-        for window, title in zip(boundary_windows, titles)
+        for window, title in pairs
     ]
-
-    timestamps.sort(key=lambda ts: _time_str_to_seconds(ts.time))
 
     return timestamps
 

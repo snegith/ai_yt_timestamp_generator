@@ -32,8 +32,8 @@ from hypothesis import strategies as st
 from pipeline.preprocess import TextWindow
 from pipeline.titles import (
     generate_titles,
+    _seconds_to_time_str,
     _time_str_to_seconds,
-    _unique_seconds_to_time_str,
 )
 
 
@@ -167,7 +167,7 @@ def test_generate_titles_sorted_order_matches_sorted_start_times(
 
     The time values in the returned timestamps, when converted to seconds,
     SHALL match unique display labels derived from sorted start_times
-    (truncated to int, with +1s bumps when labels would collide).
+    (truncated to int seconds for display).
     """
     windows = [
         TextWindow(text=f"Excerpt {i}.", start_time=t)
@@ -181,9 +181,8 @@ def test_generate_titles_sorted_order_matches_sorted_start_times(
          patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}):
         result = _run(generate_titles(windows))
 
-    used: set[str] = set()
     expected_sorted_seconds = [
-        _to_seconds(_unique_seconds_to_time_str(t, used))
+        _to_seconds(_seconds_to_time_str(t))
         for t in sorted(start_times)
     ]
     actual_seconds = [_to_seconds(ts.time) for ts in result]
@@ -259,21 +258,16 @@ def test_reverse_sorted_windows_produce_sorted_timestamps() -> None:
     )
 
 
-def test_duplicate_start_times_produce_non_decreasing_order() -> None:
-    """Windows with identical start_times must produce non-decreasing timestamps."""
+def test_duplicate_start_times_keep_matching_labels() -> None:
+    """Duplicate start times must keep the true second value, not bump labels."""
     windows = [
-        TextWindow(text=f"Excerpt {i}.", start_time=120.0)
-        for i in range(4)
+        TextWindow(text="Excerpt A.", start_time=10.0),
+        TextWindow(text="Excerpt B.", start_time=10.0),
     ]
-    titles = [f"Chapter {i}" for i in range(4)]
-    mock_client = _make_mock_groq_client(titles)
+    mock_client = _make_mock_groq_client(["Chapter A", "Chapter B"])
 
     with patch("pipeline.titles.AsyncGroq", return_value=mock_client), \
          patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}):
         result = _run(generate_titles(windows))
 
-    seconds = [_to_seconds(ts.time) for ts in result]
-    for i in range(len(seconds) - 1):
-        assert seconds[i] <= seconds[i + 1], (
-            f"Duplicate start_times must produce non-decreasing order, got {seconds}"
-        )
+    assert [ts.time for ts in result] == ["0:10", "0:10"]

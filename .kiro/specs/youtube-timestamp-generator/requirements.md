@@ -119,7 +119,7 @@ This feature delivers an AI-powered YouTube timestamp generator consisting of tw
 
 1. WHEN preprocessing is complete, THE Backend SHALL encode each text window into a sentence embedding using the `sentence-transformers` model `all-MiniLM-L6-v2`.
 2. WHEN comparing adjacent text window embeddings, THE Backend SHALL compute cosine similarity between consecutive window embeddings.
-3. WHEN the cosine similarity between two consecutive windows falls below the threshold of 0.35, THE Backend SHALL mark that boundary as a Topic Boundary.
+3. WHEN the cosine similarity between two consecutive windows falls below a per-video adaptive cutoff (the mean of all consecutive similarities minus a fixed fraction of their standard deviation), THE Backend SHALL mark that boundary as a Topic Boundary. (A fixed absolute threshold is unreliable because baseline similarity varies widely between videos; an adaptive cutoff flags the genuine topic shifts in each video.)
 4. THE Backend SHALL produce at least one Timestamp at time "0:00" regardless of topic boundary detection results.
 
 ---
